@@ -1,27 +1,26 @@
 import 'package:flutter/material.dart';
-import '../models/mood_entry.dart';
+import 'package:provider/provider.dart';
+import '../view_models/statistics_view_model.dart';
 
-class StatisticsScreen extends StatelessWidget {
-  final List<MoodEntry> moodEntries;
-  final VoidCallback onGoBack;
+class StatisticsScreen extends StatefulWidget {
+  const StatisticsScreen({super.key});
 
-  const StatisticsScreen({
-    super.key,
-    required this.moodEntries,
-    required this.onGoBack,
-  });
+  @override
+  State<StatisticsScreen> createState() => _StatisticsScreenState();
+}
+
+class _StatisticsScreenState extends State<StatisticsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<StatisticsViewModel>().loadStatistics();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    // Группируем записи по дням (последние 7 дней)
-    final lastWeekEntries = moodEntries.length > 7
-        ? moodEntries.sublist(moodEntries.length - 7)
-        : moodEntries;
-
-    // Считаем среднее настроение за неделю
-    final averageMood = lastWeekEntries.isEmpty
-        ? 0
-        : lastWeekEntries.map((e) => e.moodLevel).reduce((a, b) => a + b) / lastWeekEntries.length;
+    final viewModel = context.watch<StatisticsViewModel>();
 
     return Scaffold(
       backgroundColor: Colors.grey[50],
@@ -29,94 +28,135 @@ class StatisticsScreen extends StatelessWidget {
         title: const Text('📊 Статистика настроения'),
         backgroundColor: Colors.deepPurple,
         foregroundColor: Colors.white,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: onGoBack,
-        ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Статистика
-            _buildStatsCard(averageMood),
+      body: viewModel.isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+        onRefresh: () async {
+          await viewModel.loadStatistics();
+        },
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Общая статистика
+              _buildStatsCards(viewModel),
 
-            const SizedBox(height: 30),
-            const Text(
-              'График за неделю:',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
+              const SizedBox(height: 30),
+              const Text(
+                'График за неделю:',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
 
-            const SizedBox(height: 20),
-            _buildMoodChart(lastWeekEntries),
+              const SizedBox(height: 20),
+              _buildWeeklyChart(viewModel),
 
-            const SizedBox(height: 40),
-            const Text(
-              'История настроений:',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: Colors.black87,
+              const SizedBox(height: 40),
+              const Text(
+                'Распределение настроений:',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-            ),
 
-            const SizedBox(height: 20),
-            moodEntries.isEmpty
-                ? _buildEmptyState()
-                : _buildMoodHistory(),
-          ],
+              const SizedBox(height: 20),
+              _buildMoodDistribution(viewModel),
+
+              const SizedBox(height: 40),
+              const Text(
+                'Последние записи:',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              viewModel.monthlyEntries.isEmpty
+                  ? _buildEmptyState()
+                  : _buildRecentEntries(viewModel),
+
+              if (viewModel.errorMessage.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 20),
+                  child: Text(
+                    viewModel.errorMessage,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildStatsCard(double averageMood) {
+  Widget _buildStatsCards(StatisticsViewModel viewModel) {
+    final weeklyAvg = viewModel.getAverageMood(viewModel.weeklyEntries);
+    final totalEntries = viewModel.getTotalEntriesCount();
+    final mostCommon = viewModel.getMostCommonMood(viewModel.monthlyEntries);
+
+    return Row(
+      children: [
+        Expanded(
+          child: _buildStatCard(
+            'Среднее за неделю',
+            weeklyAvg.toStringAsFixed(1),
+            Icons.trending_up,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildStatCard(
+            'Всего записей',
+            totalEntries.toString(),
+            Icons.list,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _buildStatCard(
+            'Чаще всего',
+            mostCommon.split(' ')[0], // только эмодзи
+            Icons.star,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard(String title, String value, IconData icon) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+        padding: const EdgeInsets.all(16),
+        child: Column(
           children: [
-            Column(
-              children: [
-                Text(
-                  moodEntries.length.toString(),
-                  style: const TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.deepPurple,
-                  ),
-                ),
-                const Text(
-                  'Всего записей',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
+            Icon(icon, color: Colors.deepPurple, size: 24),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
-            Column(
-              children: [
-                Text(
-                  averageMood.toStringAsFixed(1),
-                  style: const TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.deepPurple,
-                  ),
-                ),
-                const Text(
-                  'Среднее за неделю',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
+            const SizedBox(height: 4),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+              ),
             ),
           ],
         ),
@@ -124,32 +164,12 @@ class StatisticsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildMoodChart(List<MoodEntry> entries) {
-    if (entries.isEmpty) {
-      return Container(
-        height: 200,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.2),
-              blurRadius: 8,
-            ),
-          ],
-        ),
-        child: const Center(
-          child: Text(
-            'Нет данных для графика',
-            style: TextStyle(color: Colors.grey),
-          ),
-        ),
-      );
-    }
+  Widget _buildWeeklyChart(StatisticsViewModel viewModel) {
+    final chartData = viewModel.getChartData();
 
     return Container(
       height: 200,
-      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -161,56 +181,184 @@ class StatisticsScreen extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: List.generate(entries.length, (index) {
-          final entry = entries[index];
-          final heightPercentage = entry.moodLevel / 5.0;
-          return _buildChartColumn(
-            index + 1,
-            heightPercentage,
-            entry.emoji,
-            entry.formattedDate,
-          );
-        }),
+      child: Column(
+        children: [
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: chartData.map((data) {
+                final height = (data['average'] as double) * 20;
+                return Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Container(
+                      width: 25,
+                      height: height.clamp(0, 150),
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.deepPurple.withOpacity(0.8),
+                            Colors.deepPurple,
+                          ],
+                        ),
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(4),
+                          topRight: Radius.circular(4),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      data['day'] as String,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      (data['average'] as double).toStringAsFixed(1),
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                  ],
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Среднее настроение по дням недели',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildChartColumn(int index, double heightPercentage, String emoji, String date) {
+  Widget _buildMoodDistribution(StatisticsViewModel viewModel) {
+    final distribution = viewModel.getMoodDistribution(viewModel.monthlyEntries);
+    final total = distribution.values.reduce((a, b) => a + b);
+
+    if (total == 0) {
+      return const Center(
+        child: Text('Нет данных для отображения'),
+      );
+    }
+
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            for (final entry in distribution.entries)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Text(
+                      _getMoodEmoji(entry.key),
+                      style: const TextStyle(fontSize: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_getMoodLabel(entry.key)),
+                          const SizedBox(height: 4),
+                          LinearProgressIndicator(
+                            value: total > 0 ? entry.value / total : 0,
+                            backgroundColor: Colors.grey[200],
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              _getMoodColor(entry.key),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '${entry.value} (${total > 0 ? ((entry.value / total) * 100).toStringAsFixed(0) : 0}%)',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _getMoodEmoji(int level) {
+    switch (level) {
+      case 1: return '😢';
+      case 2: return '😕';
+      case 3: return '😐';
+      case 4: return '🙂';
+      case 5: return '😄';
+      default: return '😐';
+    }
+  }
+
+  String _getMoodLabel(int level) {
+    switch (level) {
+      case 1: return 'Грустно';
+      case 2: return 'Так себе';
+      case 3: return 'Нормально';
+      case 4: return 'Хорошо';
+      case 5: return 'Отлично';
+      default: return 'Неизвестно';
+    }
+  }
+
+  Color _getMoodColor(int level) {
+    switch (level) {
+      case 1: return Colors.blue;
+      case 2: return Colors.green;
+      case 3: return Colors.orange;
+      case 4: return Colors.yellow[700]!;
+      case 5: return Colors.pink;
+      default: return Colors.grey;
+    }
+  }
+
+  Widget _buildRecentEntries(StatisticsViewModel viewModel) {
+    final recentEntries = viewModel.monthlyEntries.take(10).toList();
+
     return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Container(
-          width: 30,
-          height: 120 * heightPercentage,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Colors.deepPurple.withOpacity(0.8),
-                Colors.deepPurple,
+      children: recentEntries.map((entry) {
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: _getMoodColor(entry.moodLevel).withOpacity(0.2),
+              child: Text(
+                entry.emoji,
+                style: const TextStyle(fontSize: 20),
+              ),
+            ),
+            title: Text(entry.moodName),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(entry.formattedDate),
+                if (entry.note != null && entry.note!.isNotEmpty)
+                  Text(
+                    entry.note!,
+                    style: const TextStyle(fontStyle: FontStyle.italic),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
               ],
             ),
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(8),
-              topRight: Radius.circular(8),
-            ),
           ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'День $index',
-          style: const TextStyle(
-            fontSize: 10,
-            color: Colors.grey,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(emoji, style: const TextStyle(fontSize: 16)),
-      ],
+        );
+      }).toList(),
     );
   }
 
@@ -237,55 +385,8 @@ class StatisticsScreen extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.grey),
           ),
-          const SizedBox(height: 30),
-          ElevatedButton(
-            onPressed: onGoBack,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.deepPurple,
-            ),
-            child: const Text('Добавить настроение'),
-          ),
         ],
       ),
-    );
-  }
-
-  Widget _buildMoodHistory() {
-    // Берем последние 10 записей
-    final recentEntries = moodEntries.length > 10
-        ? moodEntries.sublist(moodEntries.length - 10).reversed.toList()
-        : moodEntries.reversed.toList();
-
-    return Column(
-      children: recentEntries.map((entry) {
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: Colors.deepPurple[100],
-              child: Text(
-                entry.emoji,
-                style: const TextStyle(fontSize: 20),
-              ),
-            ),
-            title: Text(entry.moodName),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(entry.formattedDate),
-                if (entry.note != null && entry.note!.isNotEmpty)
-                  Text(
-                    entry.note!,
-                    style: const TextStyle(fontStyle: FontStyle.italic),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-              ],
-            ),
-            trailing: const Icon(Icons.chevron_right, color: Colors.grey),
-          ),
-        );
-      }).toList(),
     );
   }
 }
